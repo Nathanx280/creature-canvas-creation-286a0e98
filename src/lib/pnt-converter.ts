@@ -68,18 +68,6 @@ export const PAINTING_TARGETS: PaintingTarget[] = [
   { name: "Cannon", suffix: "_Cannon_C", width: 256, height: 256, category: "structures" },
   { name: "Stone Pillar", suffix: "_Pillar_Stone_C", width: 128, height: 256, category: "structures" },
 
-  // ===== Structures & Items =====
-  { name: "Single Flag", suffix: "_Flag_C", width: 256, height: 256, category: "structures" },
-  { name: "Multi Panel Flag", suffix: "_FlagMultiPanel_C", width: 256, height: 384, category: "structures" },
-  { name: "Shag Rug", suffix: "_Rug_C", width: 256, height: 256, category: "structures" },
-  { name: "Bear Rug", suffix: "_BearRug_C", width: 256, height: 256, category: "structures" },
-  { name: "Spotlight", suffix: "_Spotlight_C", width: 256, height: 256, category: "structures" },
-  { name: "Raft", suffix: "_Raft_C", width: 256, height: 256, category: "structures" },
-  { name: "Motorboat", suffix: "_Motorboat_C", width: 256, height: 256, category: "structures" },
-  { name: "Catapult", suffix: "_Catapult_C", width: 256, height: 256, category: "structures" },
-  { name: "Ballista", suffix: "_Ballista_C", width: 256, height: 256, category: "structures" },
-  { name: "Cannon", suffix: "_Cannon_C", width: 256, height: 256, category: "structures" },
-  { name: "Stone Pillar", suffix: "_Pillar_Stone_C", width: 128, height: 256, category: "structures" },
 
   // ===== Human Characters =====
   { name: "Human (Male)", suffix: "_PlayerPawnTest_Male_C", width: 512, height: 512, category: "humans" },
