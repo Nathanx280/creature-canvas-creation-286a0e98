@@ -1,5 +1,8 @@
-import { Upload, Download, Settings, RotateCcw, Zap, Sparkles, Copy, Check } from "lucide-react";
-import { useRef, useState, useCallback, ChangeEvent, useEffect } from "react";
+import {
+  Upload, Download, Settings, RotateCcw, Zap, Sparkles, Copy, Check,
+  Star, Package, Keyboard,
+} from "lucide-react";
+import { useRef, useState, useCallback, ChangeEvent, useEffect, useMemo } from "react";
 import { PAINTING_TARGETS, convertImageToPNT, downloadPNT } from "@/lib/pnt-converter";
 import { ARK_PALETTE } from "@/lib/ark-palette";
 import { applyAdjustments } from "@/lib/image-adjustments";
@@ -7,6 +10,8 @@ import ColorPalette from "@/components/ColorPalette";
 import ImagePreview from "@/components/ImagePreview";
 import TargetSelector from "@/components/TargetSelector";
 import ImageAdjustments, { Adjustments, DEFAULT_ADJUSTMENTS } from "@/components/ImageAdjustments";
+
+const FAV_KEY = "pnt_favorite_targets";
 
 const Index = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -24,15 +29,35 @@ const Index = () => {
   const [converting, setConverting] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [recentTargets, setRecentTargets] = useState<number[]>([]);
+  const [favorites, setFavorites] = useState<number[]>([]);
   const [copied, setCopied] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
+  const [batchOpen, setBatchOpen] = useState(false);
+  const [batchSelection, setBatchSelection] = useState<Set<number>>(new Set());
 
   const target = PAINTING_TARGETS[selectedTarget];
   const finalFileName = `${fileName}${target.suffix}.pnt`;
 
+  // Load favorites from localStorage
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(FAV_KEY);
+      if (raw) setFavorites(JSON.parse(raw));
+    } catch { /* noop */ }
+  }, []);
+
+  const saveFavorites = (next: number[]) => {
+    setFavorites(next);
+    localStorage.setItem(FAV_KEY, JSON.stringify(next));
+  };
+
+  const toggleFavorite = (idx: number) => {
+    saveFavorites(favorites.includes(idx) ? favorites.filter((i) => i !== idx) : [...favorites, idx]);
+  };
+
   const loadImage = useCallback((file: File) => {
     const baseName = file.name.replace(/\.[^.]+$/, "");
     setFileName(baseName);
-
     const img = new Image();
     img.onload = () => {
       setSourceImage(img);
@@ -65,10 +90,9 @@ const Index = () => {
     setSourceImageData(data);
   }, [sourceImage, adjustments]);
 
-  // Auto-convert when settings change (untouched conversion logic)
+  // Auto-convert (untouched conversion logic)
   useEffect(() => {
     if (!sourceImageData) return;
-
     setConverting(true);
     const timeout = setTimeout(() => {
       const result = convertImageToPNT(
@@ -82,16 +106,34 @@ const Index = () => {
       setPntData(result.pntData);
       setConverting(false);
     }, 50);
-
     return () => clearTimeout(timeout);
   }, [sourceImageData, selectedTarget, enabledColors, dithering, target.width, target.height]);
 
+  // Compute palette usage stats from preview
+  const usageStats = useMemo(() => {
+    const map = new Map<number, number>();
+    if (!previewImageData) return map;
+    const d = previewImageData.data;
+    for (let i = 0; i < d.length; i += 4) {
+      // We don't have the index map here, so approximate by closest palette match using preview rgb
+      const r = d[i], g = d[i + 1], b = d[i + 2], a = d[i + 3];
+      if (a < 128) continue;
+      // Direct lookup against ARK_PALETTE (preview is already palettized so this is exact)
+      for (const c of ARK_PALETTE) {
+        if (c.r === r && c.g === g && c.b === b) {
+          map.set(c.index, (map.get(c.index) ?? 0) + 1);
+          break;
+        }
+      }
+    }
+    return map;
+  }, [previewImageData]);
+
+  const totalPreviewPixels = previewImageData ? previewImageData.width * previewImageData.height : 0;
+
   const handleSelectTarget = (idx: number) => {
     setSelectedTarget(idx);
-    setRecentTargets((prev) => {
-      const next = [idx, ...prev.filter((i) => i !== idx)].slice(0, 5);
-      return next;
-    });
+    setRecentTargets((prev) => [idx, ...prev.filter((i) => i !== idx)].slice(0, 6));
   };
 
   const handleDownload = () => {
@@ -99,11 +141,20 @@ const Index = () => {
     downloadPNT(pntData, finalFileName);
   };
 
+  const handleBatchDownload = () => {
+    if (!sourceImageData) return;
+    Array.from(batchSelection).forEach((idx) => {
+      const t = PAINTING_TARGETS[idx];
+      const result = convertImageToPNT(sourceImageData, t.width, t.height, enabledColors, dithering);
+      downloadPNT(result.pntData, `${fileName}${t.suffix}.pnt`);
+    });
+    setBatchOpen(false);
+  };
+
   const handleToggleColor = (index: number) => {
     setEnabledColors((prev) => {
       const next = new Set(prev);
-      if (next.has(index)) next.delete(index);
-      else next.add(index);
+      if (next.has(index)) next.delete(index); else next.add(index);
       return next;
     });
   };
@@ -123,19 +174,28 @@ const Index = () => {
     setTimeout(() => setCopied(false), 1500);
   };
 
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.target as HTMLElement)?.tagName === "INPUT" || (e.target as HTMLElement)?.tagName === "TEXTAREA") return;
+      if (e.key === "d" && pntData) handleDownload();
+      if (e.key === "f") toggleFavorite(selectedTarget);
+      if (e.key === "?" || e.key === "/") setShowShortcuts((s) => !s);
+      if (e.key === "Escape") { setShowShortcuts(false); setBatchOpen(false); }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [pntData, selectedTarget, favorites]);
+
+  const isFav = favorites.includes(selectedTarget);
+
   return (
     <div className="min-h-screen flex flex-col">
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept="image/*"
-        onChange={handleFileChange}
-        className="hidden"
-      />
+      <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFileChange} className="hidden" />
 
       {/* Header */}
       <header className="border-b border-border/60 px-6 py-4 backdrop-blur-md sticky top-0 z-40 bg-background/70">
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
+        <div className="max-w-7xl mx-auto flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: "var(--gradient-hero)" }}>
               <Zap className="w-5 h-5 text-primary-foreground" />
@@ -145,23 +205,22 @@ const Index = () => {
                 ARK <span className="text-gradient">PNT Studio</span>
               </h1>
               <p className="text-[11px] text-muted-foreground">
-                Convert · Adjust · Paint
+                {PAINTING_TARGETS.length} paint targets · 25-color ARK palette · advanced adjustments
               </p>
             </div>
           </div>
-          <a
-            href="https://ark.fandom.com/wiki/Painting"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="hidden sm:inline-flex chip hover:text-primary transition-colors"
-          >
-            <Sparkles className="w-3 h-3" />
-            ARK Painting Wiki
-          </a>
+          <div className="flex items-center gap-2">
+            <button onClick={() => setShowShortcuts(true)} className="chip hover:text-primary transition-colors" title="Keyboard shortcuts">
+              <Keyboard className="w-3 h-3" /> Shortcuts
+            </button>
+            <a href="https://ark.fandom.com/wiki/Painting" target="_blank" rel="noopener noreferrer"
+              className="hidden sm:inline-flex chip hover:text-primary transition-colors">
+              <Sparkles className="w-3 h-3" /> ARK Wiki
+            </a>
+          </div>
         </div>
       </header>
 
-      {/* Main */}
       <main className="flex-1 max-w-7xl mx-auto w-full px-4 py-6 space-y-6">
         {/* Upload Zone */}
         {!sourceImage && (
@@ -178,22 +237,22 @@ const Index = () => {
             <div className="w-16 h-16 rounded-2xl flex items-center justify-center mb-4" style={{ background: "var(--gradient-hero)" }}>
               <Upload className="w-8 h-8 text-primary-foreground" />
             </div>
-            <p className="text-xl font-semibold text-foreground mb-1">
-              Drop your image here
-            </p>
-            <p className="text-sm text-muted-foreground mb-4">
-              or click to browse · PNG, JPG, JPEG, BMP, WEBP
-            </p>
-            <div className="flex flex-wrap justify-center gap-2 max-w-md">
-              <span className="chip">🦖 80+ creature targets</span>
-              <span className="chip">🧑 Human characters</span>
+            <p className="text-xl font-semibold text-foreground mb-1">Drop your image here</p>
+            <p className="text-sm text-muted-foreground mb-4">or click to browse · PNG, JPG, JPEG, BMP, WEBP</p>
+            <div className="flex flex-wrap justify-center gap-2 max-w-2xl">
+              <span className="chip">🦖 {PAINTING_TARGETS.filter(t => ["carnivores","herbivores","flyers","aquatic","misc_creatures","invertebrates","tek","aberration","extinction","genesis","scorched","ragnarok"].includes(t.category)).length}+ creatures</span>
+              <span className="chip">🧑 Humans</span>
               <span className="chip">🪧 Signs & flags</span>
-              <span className="chip">⚡ Tek dinos</span>
+              <span className="chip">🛡️ Armor</span>
+              <span className="chip">🪑 Saddles</span>
+              <span className="chip">⚡ Tek</span>
+              <span className="chip">🌌 All DLC maps</span>
+              <span className="chip">🎨 14 effects</span>
+              <span className="chip">📦 Batch export</span>
             </div>
           </div>
         )}
 
-        {/* Editor */}
         {sourceImage && (
           <>
             {/* Settings Bar */}
@@ -205,19 +264,21 @@ const Index = () => {
 
               <TargetSelector selectedIndex={selectedTarget} onChange={handleSelectTarget} />
 
+              <button
+                onClick={() => toggleFavorite(selectedTarget)}
+                className={`btn-ghost !p-1.5 ${isFav ? "!bg-primary/20 !text-primary" : ""}`}
+                title="Favorite (F)"
+              >
+                <Star className={`w-3.5 h-3.5 ${isFav ? "fill-current" : ""}`} />
+              </button>
+
               <div className="flex items-center gap-2">
                 <span className="text-xs text-muted-foreground">Dithering</span>
                 <button
                   onClick={() => setDithering(!dithering)}
-                  className={`relative w-10 h-5 rounded-full transition-colors ${
-                    dithering ? "bg-primary" : "bg-muted"
-                  }`}
+                  className={`relative w-10 h-5 rounded-full transition-colors ${dithering ? "bg-primary" : "bg-muted"}`}
                 >
-                  <span
-                    className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-background transition-transform ${
-                      dithering ? "translate-x-5" : ""
-                    }`}
-                  />
+                  <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-background transition-transform ${dithering ? "translate-x-5" : ""}`} />
                 </button>
               </div>
 
@@ -231,25 +292,22 @@ const Index = () => {
               </div>
 
               <div className="flex items-center gap-2 ml-auto">
-                <button onClick={handleReset} className="btn-ghost flex items-center gap-1.5">
-                  <RotateCcw className="w-3.5 h-3.5" />
-                  New Image
+                <button onClick={() => setBatchOpen(true)} className="btn-ghost flex items-center gap-1.5">
+                  <Package className="w-3.5 h-3.5" /> Batch
                 </button>
-                <button
-                  onClick={handleDownload}
-                  disabled={!pntData || converting}
-                  className="btn-primary flex items-center gap-1.5"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  Download .pnt
+                <button onClick={handleReset} className="btn-ghost flex items-center gap-1.5">
+                  <RotateCcw className="w-3.5 h-3.5" /> New Image
+                </button>
+                <button onClick={handleDownload} disabled={!pntData || converting} className="btn-primary flex items-center gap-1.5">
+                  <Download className="w-3.5 h-3.5" /> Download .pnt
                 </button>
               </div>
             </div>
 
-            {/* Filename hint with copy */}
+            {/* Filename hint */}
             <div className="glass p-3 flex items-center justify-between gap-3">
               <div className="flex items-center gap-2 min-w-0">
-                <span className="text-[11px] uppercase tracking-wide text-muted-foreground shrink-0">Will save as</span>
+                <span className="text-[11px] uppercase tracking-wide text-muted-foreground shrink-0">Saves as</span>
                 <code className="text-xs text-primary truncate">{finalFileName}</code>
               </div>
               <button onClick={handleCopyName} className="btn-ghost flex items-center gap-1.5 shrink-0">
@@ -257,6 +315,27 @@ const Index = () => {
                 {copied ? "Copied" : "Copy"}
               </button>
             </div>
+
+            {/* Favorites */}
+            {favorites.length > 0 && (
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[11px] uppercase tracking-wide text-muted-foreground flex items-center gap-1">
+                  <Star className="w-3 h-3 fill-current" /> Favorites
+                </span>
+                {favorites.map((idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => setSelectedTarget(idx)}
+                    className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
+                      idx === selectedTarget ? "bg-primary text-primary-foreground border-primary"
+                      : "bg-muted/40 text-muted-foreground border-border/60 hover:text-foreground hover:bg-muted"
+                    }`}
+                  >
+                    {PAINTING_TARGETS[idx]?.name}
+                  </button>
+                ))}
+              </div>
+            )}
 
             {/* Recently used */}
             {recentTargets.length > 1 && (
@@ -267,9 +346,8 @@ const Index = () => {
                     key={idx}
                     onClick={() => setSelectedTarget(idx)}
                     className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
-                      idx === selectedTarget
-                        ? "bg-primary text-primary-foreground border-primary"
-                        : "bg-muted/40 text-muted-foreground border-border/60 hover:text-foreground hover:bg-muted"
+                      idx === selectedTarget ? "bg-primary text-primary-foreground border-primary"
+                      : "bg-muted/40 text-muted-foreground border-border/60 hover:text-foreground hover:bg-muted"
                     }`}
                   >
                     {PAINTING_TARGETS[idx].name}
@@ -282,15 +360,8 @@ const Index = () => {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="glass p-4 flex flex-col items-center">
                 <h3 className="text-sm font-semibold text-foreground mb-3">Original</h3>
-                <img
-                  src={sourceImage.src}
-                  alt="Original"
-                  className="max-w-full h-auto rounded-lg border border-border"
-                  style={{ maxHeight: 400 }}
-                />
-                <p className="text-xs text-muted-foreground mt-2">
-                  {sourceImage.width} × {sourceImage.height} px
-                </p>
+                <img src={sourceImage.src} alt="Original" className="max-w-full h-auto rounded-lg border border-border" style={{ maxHeight: 400 }} />
+                <p className="text-xs text-muted-foreground mt-2">{sourceImage.width} × {sourceImage.height} px</p>
               </div>
 
               <ImagePreview
@@ -298,19 +369,22 @@ const Index = () => {
                 width={target.width}
                 height={target.height}
                 label={converting ? "Converting..." : `Preview (${target.name})`}
+                fileBaseName={fileName}
               />
             </div>
 
             {/* Adjustments */}
             <ImageAdjustments value={adjustments} onChange={setAdjustments} />
 
-            {/* Color Palette */}
+            {/* Color Palette w/ stats */}
             <ColorPalette
               enabledColors={enabledColors}
               onToggleColor={handleToggleColor}
               onEnableAll={() => setEnabledColors(new Set(ARK_PALETTE.map((c) => c.index)))}
               onDisableAll={() => setEnabledColors(new Set())}
               onApplyPreset={(indices) => setEnabledColors(new Set(indices))}
+              usageStats={usageStats}
+              totalPixels={totalPreviewPixels}
             />
           </>
         )}
@@ -325,6 +399,81 @@ const Index = () => {
           </code>
         </div>
       </main>
+
+      {/* Shortcuts modal */}
+      {showShortcuts && (
+        <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setShowShortcuts(false)}>
+          <div className="glass-strong p-6 max-w-sm w-full" onClick={(e) => e.stopPropagation()}>
+            <h2 className="text-base font-semibold mb-3 flex items-center gap-2">
+              <Keyboard className="w-4 h-4 text-primary" /> Keyboard Shortcuts
+            </h2>
+            <div className="space-y-2 text-sm">
+              {[
+                ["D", "Download .pnt"],
+                ["F", "Toggle favorite for current target"],
+                ["?", "Show / hide shortcuts"],
+                ["Esc", "Close dialogs"],
+              ].map(([k, v]) => (
+                <div key={k} className="flex justify-between gap-3">
+                  <span className="text-muted-foreground">{v}</span>
+                  <kbd className="px-2 py-0.5 rounded bg-muted text-foreground text-xs font-mono border border-border">{k}</kbd>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Batch download modal */}
+      {batchOpen && (
+        <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setBatchOpen(false)}>
+          <div className="glass-strong p-6 max-w-2xl w-full max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-base font-semibold flex items-center gap-2">
+                <Package className="w-4 h-4 text-primary" /> Batch Export
+                <span className="chip">{batchSelection.size} selected</span>
+              </h2>
+              <div className="flex gap-2">
+                <button onClick={() => setBatchSelection(new Set(favorites))} className="btn-ghost text-xs">From Favorites</button>
+                <button onClick={() => setBatchSelection(new Set())} className="btn-ghost text-xs">Clear</button>
+              </div>
+            </div>
+            <div className="overflow-y-auto scrollbar-thin flex-1 -mx-2 px-2">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+                {PAINTING_TARGETS.map((t, i) => {
+                  const sel = batchSelection.has(i);
+                  return (
+                    <button
+                      key={i}
+                      onClick={() => {
+                        const next = new Set(batchSelection);
+                        if (sel) next.delete(i); else next.add(i);
+                        setBatchSelection(next);
+                      }}
+                      className={`text-xs text-left px-2 py-1.5 rounded border transition-colors ${
+                        sel ? "bg-primary/20 border-primary text-primary" : "bg-muted/40 border-border/60 text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      <div className="truncate">{t.name}</div>
+                      <div className="text-[10px] opacity-60">{t.width}×{t.height}</div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 mt-4">
+              <button onClick={() => setBatchOpen(false)} className="btn-ghost">Cancel</button>
+              <button
+                onClick={handleBatchDownload}
+                disabled={batchSelection.size === 0 || !sourceImageData}
+                className="btn-primary flex items-center gap-1.5"
+              >
+                <Download className="w-3.5 h-3.5" /> Export {batchSelection.size} files
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
