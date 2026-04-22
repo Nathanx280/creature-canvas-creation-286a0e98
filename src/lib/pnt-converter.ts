@@ -7,7 +7,25 @@ export interface PNTResult {
   height: number;
 }
 
-export type TargetCategory = "signs" | "structures" | "humans" | "carnivores" | "herbivores" | "flyers" | "aquatic" | "misc_creatures";
+export type TargetCategory =
+  | "signs"
+  | "structures"
+  | "humans"
+  | "carnivores"
+  | "herbivores"
+  | "flyers"
+  | "aquatic"
+  | "misc_creatures"
+  | "invertebrates"
+  | "tek"
+  | "saddles"
+  | "armor"
+  | "weapons"
+  | "aberration"
+  | "extinction"
+  | "genesis"
+  | "scorched"
+  | "ragnarok";
 
 export interface PaintingTarget {
   name: string;
