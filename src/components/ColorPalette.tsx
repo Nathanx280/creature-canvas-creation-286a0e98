@@ -77,7 +77,22 @@ const ColorPalette = ({
           <h3 className="text-sm font-semibold text-foreground">Color Palette</h3>
           <span className="chip">{enabledColors.size}/{ARK_PALETTE.length}</span>
         </div>
-        <div className="flex gap-2 text-xs items-center">
+        <div className="flex gap-2 text-xs items-center flex-wrap">
+          {onAutoPick && (
+            <div className="flex items-center gap-1 bg-muted/40 rounded-lg pl-2 pr-1 py-0.5 border border-border/60">
+              <Wand2 className="w-3 h-3 text-primary" />
+              <span className="text-muted-foreground">Auto</span>
+              <input
+                type="number"
+                min={2}
+                max={25}
+                value={autoCount}
+                onChange={(e) => setAutoCount(Math.max(2, Math.min(25, Number(e.target.value) || 8)))}
+                className="w-10 bg-transparent text-foreground text-center focus:outline-none"
+              />
+              <button onClick={() => onAutoPick(autoCount)} className="text-primary hover:text-primary-glow px-1">Pick</button>
+            </div>
+          )}
           <button onClick={saveCurrent} className="btn-ghost flex items-center gap-1 !py-1">
             <Save className="w-3 h-3" /> Save
           </button>
