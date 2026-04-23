@@ -1,5 +1,5 @@
 import { ARK_PALETTE } from "@/lib/ark-palette";
-import { Palette, Save, Trash2 } from "lucide-react";
+import { Palette, Save, Trash2, Wand2 } from "lucide-react";
 import { useEffect, useState } from "react";
 
 interface ColorPaletteProps {
@@ -8,7 +8,8 @@ interface ColorPaletteProps {
   onEnableAll: () => void;
   onDisableAll: () => void;
   onApplyPreset: (indices: number[]) => void;
-  usageStats?: Map<number, number>; // pixel counts per color index
+  onAutoPick?: (count: number) => void;
+  usageStats?: Map<number, number>;
   totalPixels?: number;
 }
 
@@ -43,9 +44,11 @@ const ColorPalette = ({
   onEnableAll,
   onDisableAll,
   onApplyPreset,
+  onAutoPick,
   usageStats,
   totalPixels,
 }: ColorPaletteProps) => {
+  const [autoCount, setAutoCount] = useState(8);
   const [custom, setCustom] = useState<{ name: string; indices: number[] }[]>([]);
 
   useEffect(() => {
