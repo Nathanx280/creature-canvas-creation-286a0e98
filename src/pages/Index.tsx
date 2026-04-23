@@ -1,17 +1,23 @@
 import {
   Upload, Download, Settings, RotateCcw, Zap, Sparkles, Copy, Check,
-  Star, Package, Keyboard,
+  Star, Package, Keyboard, Command, FileImage,
 } from "lucide-react";
 import { useRef, useState, useCallback, ChangeEvent, useEffect, useMemo } from "react";
+import JSZip from "jszip";
 import { PAINTING_TARGETS, convertImageToPNT, downloadPNT } from "@/lib/pnt-converter";
 import { ARK_PALETTE } from "@/lib/ark-palette";
 import { applyAdjustments } from "@/lib/image-adjustments";
+import { autoPickPalette } from "@/lib/auto-palette";
 import ColorPalette from "@/components/ColorPalette";
 import ImagePreview from "@/components/ImagePreview";
 import TargetSelector from "@/components/TargetSelector";
 import ImageAdjustments, { Adjustments, DEFAULT_ADJUSTMENTS } from "@/components/ImageAdjustments";
+import ComparisonSlider from "@/components/ComparisonSlider";
+import CommandPalette from "@/components/CommandPalette";
+import StatsDashboard from "@/components/StatsDashboard";
 
 const FAV_KEY = "pnt_favorite_targets";
+const HISTORY_LIMIT = 30;
 
 const Index = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -34,11 +40,46 @@ const Index = () => {
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [batchOpen, setBatchOpen] = useState(false);
   const [batchSelection, setBatchSelection] = useState<Set<number>>(new Set());
+  const [cmdOpen, setCmdOpen] = useState(false);
+  const [compareMode, setCompareMode] = useState(false);
+
+  // Adjustments history (undo/redo)
+  const [history, setHistory] = useState<Adjustments[]>([DEFAULT_ADJUSTMENTS]);
+  const [hIndex, setHIndex] = useState(0);
+  const skipHistoryRef = useRef(false);
 
   const target = PAINTING_TARGETS[selectedTarget];
   const finalFileName = `${fileName}${target.suffix}.pnt`;
 
-  // Load favorites from localStorage
+  // Push history when adjustments change (debounced via ref guard)
+  useEffect(() => {
+    if (skipHistoryRef.current) { skipHistoryRef.current = false; return; }
+    const t = setTimeout(() => {
+      setHistory((prev) => {
+        const truncated = prev.slice(0, hIndex + 1);
+        const next = [...truncated, adjustments].slice(-HISTORY_LIMIT);
+        setHIndex(next.length - 1);
+        return next;
+      });
+    }, 250);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [adjustments]);
+
+  const undo = () => {
+    if (hIndex <= 0) return;
+    skipHistoryRef.current = true;
+    setHIndex(hIndex - 1);
+    setAdjustments(history[hIndex - 1]);
+  };
+  const redo = () => {
+    if (hIndex >= history.length - 1) return;
+    skipHistoryRef.current = true;
+    setHIndex(hIndex + 1);
+    setAdjustments(history[hIndex + 1]);
+  };
+
+  // Load favorites
   useEffect(() => {
     try {
       const raw = localStorage.getItem(FAV_KEY);
@@ -109,16 +150,14 @@ const Index = () => {
     return () => clearTimeout(timeout);
   }, [sourceImageData, selectedTarget, enabledColors, dithering, target.width, target.height]);
 
-  // Compute palette usage stats from preview
+  // Palette usage stats from preview
   const usageStats = useMemo(() => {
     const map = new Map<number, number>();
     if (!previewImageData) return map;
     const d = previewImageData.data;
     for (let i = 0; i < d.length; i += 4) {
-      // We don't have the index map here, so approximate by closest palette match using preview rgb
       const r = d[i], g = d[i + 1], b = d[i + 2], a = d[i + 3];
       if (a < 128) continue;
-      // Direct lookup against ARK_PALETTE (preview is already palettized so this is exact)
       for (const c of ARK_PALETTE) {
         if (c.r === r && c.g === g && c.b === b) {
           map.set(c.index, (map.get(c.index) ?? 0) + 1);
@@ -141,13 +180,30 @@ const Index = () => {
     downloadPNT(pntData, finalFileName);
   };
 
-  const handleBatchDownload = () => {
+  const handleBatchDownload = async () => {
     if (!sourceImageData) return;
-    Array.from(batchSelection).forEach((idx) => {
-      const t = PAINTING_TARGETS[idx];
-      const result = convertImageToPNT(sourceImageData, t.width, t.height, enabledColors, dithering);
-      downloadPNT(result.pntData, `${fileName}${t.suffix}.pnt`);
-    });
+    if (batchSelection.size > 4) {
+      // ZIP for many files
+      const zip = new JSZip();
+      Array.from(batchSelection).forEach((idx) => {
+        const t = PAINTING_TARGETS[idx];
+        const result = convertImageToPNT(sourceImageData, t.width, t.height, enabledColors, dithering);
+        zip.file(`${fileName}${t.suffix}.pnt`, result.pntData);
+      });
+      const blob = await zip.generateAsync({ type: "blob" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${fileName}_batch.zip`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } else {
+      Array.from(batchSelection).forEach((idx) => {
+        const t = PAINTING_TARGETS[idx];
+        const result = convertImageToPNT(sourceImageData, t.width, t.height, enabledColors, dithering);
+        downloadPNT(result.pntData, `${fileName}${t.suffix}.pnt`);
+      });
+    }
     setBatchOpen(false);
   };
 
@@ -159,12 +215,20 @@ const Index = () => {
     });
   };
 
+  const handleAutoPick = (count: number) => {
+    if (!sourceImageData) return;
+    const indices = autoPickPalette(sourceImageData, count);
+    setEnabledColors(new Set(indices));
+  };
+
   const handleReset = () => {
     setSourceImage(null);
     setSourceImageData(null);
     setPreviewImageData(null);
     setPntData(null);
     setAdjustments(DEFAULT_ADJUSTMENTS);
+    setHistory([DEFAULT_ADJUSTMENTS]);
+    setHIndex(0);
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
@@ -174,18 +238,43 @@ const Index = () => {
     setTimeout(() => setCopied(false), 1500);
   };
 
+  const handleExportSettings = () => {
+    const settings = { adjustments, enabledColors: Array.from(enabledColors), dithering };
+    const blob = new Blob([JSON.stringify(settings, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${fileName}_settings.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   // Keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if ((e.target as HTMLElement)?.tagName === "INPUT" || (e.target as HTMLElement)?.tagName === "TEXTAREA") return;
+      const tag = (e.target as HTMLElement)?.tagName;
+      const inField = tag === "INPUT" || tag === "TEXTAREA";
+      // Cmd/Ctrl+K opens command palette even from fields
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault(); setCmdOpen(true); return;
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        if (e.shiftKey) redo(); else undo();
+        return;
+      }
+      if (inField) return;
       if (e.key === "d" && pntData) handleDownload();
       if (e.key === "f") toggleFavorite(selectedTarget);
+      if (e.key === "c") setCompareMode((c) => !c);
+      if (e.key === "b") setBatchOpen(true);
       if (e.key === "?" || e.key === "/") setShowShortcuts((s) => !s);
-      if (e.key === "Escape") { setShowShortcuts(false); setBatchOpen(false); }
+      if (e.key === "Escape") { setShowShortcuts(false); setBatchOpen(false); setCmdOpen(false); }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [pntData, selectedTarget, favorites]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pntData, selectedTarget, favorites, hIndex, history]);
 
   const isFav = favorites.includes(selectedTarget);
 
@@ -197,19 +286,23 @@ const Index = () => {
       <header className="border-b border-border/60 px-6 py-4 backdrop-blur-md sticky top-0 z-40 bg-background/70">
         <div className="max-w-7xl mx-auto flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: "var(--gradient-hero)" }}>
+            <div className="w-9 h-9 rounded-xl flex items-center justify-center animate-pulse-slow" style={{ background: "var(--gradient-hero)" }}>
               <Zap className="w-5 h-5 text-primary-foreground" />
             </div>
             <div>
-              <h1 className="text-lg font-bold text-foreground leading-tight">
+              <h1 className="text-lg font-bold text-foreground leading-tight flex items-center gap-2">
                 ARK <span className="text-gradient">PNT Studio</span>
+                <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-primary/20 text-primary border border-primary/40">v20</span>
               </h1>
               <p className="text-[11px] text-muted-foreground">
-                {PAINTING_TARGETS.length} paint targets · 25-color ARK palette · advanced adjustments
+                {PAINTING_TARGETS.length}+ targets · 25-color palette · 26 effects · auto-palette
               </p>
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <button onClick={() => setCmdOpen(true)} className="chip hover:text-primary transition-colors" title="Command palette (⌘K)">
+              <Command className="w-3 h-3" /> ⌘K
+            </button>
             <button onClick={() => setShowShortcuts(true)} className="chip hover:text-primary transition-colors" title="Keyboard shortcuts">
               <Keyboard className="w-3 h-3" /> Shortcuts
             </button>
@@ -240,15 +333,19 @@ const Index = () => {
             <p className="text-xl font-semibold text-foreground mb-1">Drop your image here</p>
             <p className="text-sm text-muted-foreground mb-4">or click to browse · PNG, JPG, JPEG, BMP, WEBP</p>
             <div className="flex flex-wrap justify-center gap-2 max-w-2xl">
-              <span className="chip">🦖 {PAINTING_TARGETS.filter(t => ["carnivores","herbivores","flyers","aquatic","misc_creatures","invertebrates","tek","aberration","extinction","genesis","scorched","ragnarok"].includes(t.category)).length}+ creatures</span>
+              <span className="chip">🦖 {PAINTING_TARGETS.length}+ targets</span>
               <span className="chip">🧑 Humans</span>
               <span className="chip">🪧 Signs & flags</span>
               <span className="chip">🛡️ Armor</span>
               <span className="chip">🪑 Saddles</span>
+              <span className="chip">⚔️ Weapons</span>
               <span className="chip">⚡ Tek</span>
-              <span className="chip">🌌 All DLC maps</span>
-              <span className="chip">🎨 14 effects</span>
-              <span className="chip">📦 Batch export</span>
+              <span className="chip">🌌 All DLC</span>
+              <span className="chip">🎨 26 effects</span>
+              <span className="chip">🪄 Auto-palette</span>
+              <span className="chip">📦 Batch + ZIP</span>
+              <span className="chip">↺ Undo/Redo</span>
+              <span className="chip">⌘K Command</span>
             </div>
           </div>
         )}
@@ -291,12 +388,18 @@ const Index = () => {
                 />
               </div>
 
-              <div className="flex items-center gap-2 ml-auto">
+              <div className="flex items-center gap-2 ml-auto flex-wrap">
+                <button onClick={() => setCompareMode((c) => !c)} className={`btn-ghost flex items-center gap-1.5 ${compareMode ? "!bg-primary/20 !text-primary" : ""}`} title="Toggle compare (C)">
+                  <FileImage className="w-3.5 h-3.5" /> Compare
+                </button>
+                <button onClick={handleExportSettings} className="btn-ghost flex items-center gap-1.5" title="Export settings as JSON">
+                  <Download className="w-3.5 h-3.5" /> Settings
+                </button>
                 <button onClick={() => setBatchOpen(true)} className="btn-ghost flex items-center gap-1.5">
                   <Package className="w-3.5 h-3.5" /> Batch
                 </button>
                 <button onClick={handleReset} className="btn-ghost flex items-center gap-1.5">
-                  <RotateCcw className="w-3.5 h-3.5" /> New Image
+                  <RotateCcw className="w-3.5 h-3.5" /> New
                 </button>
                 <button onClick={handleDownload} disabled={!pntData || converting} className="btn-primary flex items-center gap-1.5">
                   <Download className="w-3.5 h-3.5" /> Download .pnt
@@ -357,32 +460,58 @@ const Index = () => {
             )}
 
             {/* Previews */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="glass p-4 flex flex-col items-center">
-                <h3 className="text-sm font-semibold text-foreground mb-3">Original</h3>
-                <img src={sourceImage.src} alt="Original" className="max-w-full h-auto rounded-lg border border-border" style={{ maxHeight: 400 }} />
-                <p className="text-xs text-muted-foreground mt-2">{sourceImage.width} × {sourceImage.height} px</p>
-              </div>
-
-              <ImagePreview
-                imageData={previewImageData}
-                width={target.width}
-                height={target.height}
-                label={converting ? "Converting..." : `Preview (${target.name})`}
-                fileBaseName={fileName}
+            {compareMode ? (
+              <ComparisonSlider
+                beforeSrc={sourceImage.src}
+                afterImageData={previewImageData}
+                afterWidth={target.width}
+                afterHeight={target.height}
               />
-            </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="glass p-4 flex flex-col items-center">
+                  <h3 className="text-sm font-semibold text-foreground mb-3">Original</h3>
+                  <img src={sourceImage.src} alt="Original" className="max-w-full h-auto rounded-lg border border-border" style={{ maxHeight: 400 }} />
+                  <p className="text-xs text-muted-foreground mt-2">{sourceImage.width} × {sourceImage.height} px</p>
+                </div>
+
+                <ImagePreview
+                  imageData={previewImageData}
+                  width={target.width}
+                  height={target.height}
+                  label={converting ? "Converting..." : `Preview (${target.name})`}
+                  fileBaseName={fileName}
+                />
+              </div>
+            )}
+
+            {/* Stats */}
+            <StatsDashboard
+              usageStats={usageStats}
+              totalPixels={totalPreviewPixels}
+              width={target.width}
+              height={target.height}
+              fileSizeBytes={pntData?.byteLength ?? 0}
+            />
 
             {/* Adjustments */}
-            <ImageAdjustments value={adjustments} onChange={setAdjustments} />
+            <ImageAdjustments
+              value={adjustments}
+              onChange={setAdjustments}
+              onUndo={undo}
+              onRedo={redo}
+              canUndo={hIndex > 0}
+              canRedo={hIndex < history.length - 1}
+            />
 
-            {/* Color Palette w/ stats */}
+            {/* Color Palette */}
             <ColorPalette
               enabledColors={enabledColors}
               onToggleColor={handleToggleColor}
               onEnableAll={() => setEnabledColors(new Set(ARK_PALETTE.map((c) => c.index)))}
               onDisableAll={() => setEnabledColors(new Set())}
               onApplyPreset={(indices) => setEnabledColors(new Set(indices))}
+              onAutoPick={handleAutoPick}
               usageStats={usageStats}
               totalPixels={totalPreviewPixels}
             />
@@ -400,6 +529,25 @@ const Index = () => {
         </div>
       </main>
 
+      {/* Command palette */}
+      <CommandPalette
+        open={cmdOpen}
+        onClose={() => setCmdOpen(false)}
+        onPickTarget={handleSelectTarget}
+        actions={[
+          { label: "Download .pnt", hint: "D", run: handleDownload },
+          { label: "Toggle compare slider", hint: "C", run: () => setCompareMode((c) => !c) },
+          { label: "Toggle dithering", hint: "Switch", run: () => setDithering((d) => !d) },
+          { label: "Open batch export", hint: "B", run: () => setBatchOpen(true) },
+          { label: "Reset adjustments", hint: "Adjustments", run: () => setAdjustments(DEFAULT_ADJUSTMENTS) },
+          { label: "Auto-pick 8 dyes from image", hint: "Palette", run: () => handleAutoPick(8) },
+          { label: "Enable all dyes", run: () => setEnabledColors(new Set(ARK_PALETTE.map((c) => c.index))) },
+          { label: "Favorite current target", hint: "F", run: () => toggleFavorite(selectedTarget) },
+          { label: "Export settings as JSON", run: handleExportSettings },
+          { label: "New image", hint: "Reset", run: handleReset },
+        ]}
+      />
+
       {/* Shortcuts modal */}
       {showShortcuts && (
         <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setShowShortcuts(false)}>
@@ -409,8 +557,13 @@ const Index = () => {
             </h2>
             <div className="space-y-2 text-sm">
               {[
+                ["⌘ / Ctrl + K", "Command palette"],
+                ["⌘ / Ctrl + Z", "Undo adjustment"],
+                ["⌘ / Ctrl + ⇧ + Z", "Redo adjustment"],
                 ["D", "Download .pnt"],
-                ["F", "Toggle favorite for current target"],
+                ["C", "Toggle compare slider"],
+                ["F", "Favorite current target"],
+                ["B", "Open batch export"],
                 ["?", "Show / hide shortcuts"],
                 ["Esc", "Close dialogs"],
               ].map(([k, v]) => (
@@ -428,13 +581,15 @@ const Index = () => {
       {batchOpen && (
         <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setBatchOpen(false)}>
           <div className="glass-strong p-6 max-w-2xl w-full max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
               <h2 className="text-base font-semibold flex items-center gap-2">
                 <Package className="w-4 h-4 text-primary" /> Batch Export
                 <span className="chip">{batchSelection.size} selected</span>
+                {batchSelection.size > 4 && <span className="chip !text-primary !border-primary/40">→ ZIP</span>}
               </h2>
-              <div className="flex gap-2">
+              <div className="flex gap-2 flex-wrap">
                 <button onClick={() => setBatchSelection(new Set(favorites))} className="btn-ghost text-xs">From Favorites</button>
+                <button onClick={() => setBatchSelection(new Set(PAINTING_TARGETS.map((_, i) => i)))} className="btn-ghost text-xs">All</button>
                 <button onClick={() => setBatchSelection(new Set())} className="btn-ghost text-xs">Clear</button>
               </div>
             </div>
@@ -468,7 +623,7 @@ const Index = () => {
                 disabled={batchSelection.size === 0 || !sourceImageData}
                 className="btn-primary flex items-center gap-1.5"
               >
-                <Download className="w-3.5 h-3.5" /> Export {batchSelection.size} files
+                <Download className="w-3.5 h-3.5" /> Export {batchSelection.size} {batchSelection.size > 4 ? "as ZIP" : "files"}
               </button>
             </div>
           </div>
