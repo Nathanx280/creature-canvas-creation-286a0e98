@@ -55,7 +55,7 @@ const TargetSelector = ({ selectedIndex, onChange }: TargetSelectorProps) => {
       </button>
 
       {open && (
-        <div className="absolute z-50 mt-2 w-[360px] glass-strong rounded-xl overflow-hidden left-0">
+        <div className="absolute z-[100] mt-2 w-[360px] glass-strong rounded-xl overflow-hidden left-0 shadow-2xl">
           <div className="p-2 border-b border-border/60">
             <div className="relative">
               <Search className="w-4 h-4 absolute left-2.5 top-2.5 text-muted-foreground" />
