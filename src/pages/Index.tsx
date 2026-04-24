@@ -353,7 +353,7 @@ const Index = () => {
         {sourceImage && (
           <>
             {/* Settings Bar */}
-            <div className="glass p-4 flex flex-wrap items-center gap-3">
+            <div className="glass p-4 flex flex-wrap items-center gap-3 relative z-50">
               <div className="flex items-center gap-2 mr-2">
                 <Settings className="w-4 h-4 text-primary" />
                 <span className="text-sm font-medium text-foreground">Target</span>
