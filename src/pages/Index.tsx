@@ -15,6 +15,8 @@ import ImageAdjustments, { Adjustments, DEFAULT_ADJUSTMENTS } from "@/components
 import ComparisonSlider from "@/components/ComparisonSlider";
 import CommandPalette from "@/components/CommandPalette";
 import StatsDashboard from "@/components/StatsDashboard";
+import CreatureDisplay from "@/components/CreatureDisplay";
+import { getCreatureInfo } from "@/lib/creature-data";
 
 const FAV_KEY = "pnt_favorite_targets";
 const HISTORY_LIMIT = 30;
@@ -493,6 +495,28 @@ const Index = () => {
               height={target.height}
               fileSizeBytes={pntData?.byteLength ?? 0}
             />
+
+            {/* Creature / Item Info — real ARK blueprint data */}
+            {(() => {
+              const info = getCreatureInfo(target.suffix);
+              if (!info) return null;
+              // Map top dyes to first N regions as a visual approximation
+              const topDyes = [...usageStats.entries()]
+                .sort((a, b) => b[1] - a[1])
+                .filter(([idx]) => idx > 0)
+                .slice(0, info.regions.length);
+              const appliedDyes: Record<number, number> = {};
+              info.regions.forEach((r, i) => {
+                if (topDyes[i]) appliedDyes[r.index] = topDyes[i][0];
+              });
+              return (
+                <CreatureDisplay
+                  name={target.name}
+                  info={info}
+                  appliedDyes={appliedDyes}
+                />
+              );
+            })()}
 
             {/* Adjustments */}
             <ImageAdjustments
