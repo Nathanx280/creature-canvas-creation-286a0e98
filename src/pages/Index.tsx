@@ -15,6 +15,8 @@ import ImageAdjustments, { Adjustments, DEFAULT_ADJUSTMENTS } from "@/components
 import ComparisonSlider from "@/components/ComparisonSlider";
 import CommandPalette from "@/components/CommandPalette";
 import StatsDashboard from "@/components/StatsDashboard";
+import CreatureDisplay from "@/components/CreatureDisplay";
+import { getCreatureInfo } from "@/lib/creature-data";
 
 const FAV_KEY = "pnt_favorite_targets";
 const HISTORY_LIMIT = 30;
