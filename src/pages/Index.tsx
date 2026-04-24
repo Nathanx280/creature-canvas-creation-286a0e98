@@ -496,6 +496,28 @@ const Index = () => {
               fileSizeBytes={pntData?.byteLength ?? 0}
             />
 
+            {/* Creature / Item Info — real ARK blueprint data */}
+            {(() => {
+              const info = getCreatureInfo(target.suffix);
+              if (!info) return null;
+              // Map top dyes to first N regions as a visual approximation
+              const topDyes = [...usageStats.entries()]
+                .sort((a, b) => b[1] - a[1])
+                .filter(([idx]) => idx > 0)
+                .slice(0, info.regions.length);
+              const appliedDyes: Record<number, number> = {};
+              info.regions.forEach((r, i) => {
+                if (topDyes[i]) appliedDyes[r.index] = topDyes[i][0];
+              });
+              return (
+                <CreatureDisplay
+                  name={target.name}
+                  info={info}
+                  appliedDyes={appliedDyes}
+                />
+              );
+            })()}
+
             {/* Adjustments */}
             <ImageAdjustments
               value={adjustments}
